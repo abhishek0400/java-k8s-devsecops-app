@@ -1,0 +1,68 @@
+pipeline {
+    agent any
+    environment {
+        DOCKER_IMAGE = "yourdockerhubusername/java-k8s-app:${env.BUILD_ID}"
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/yourusername/java-k8s-devsecops-app.git'
+            }
+        }
+        stage('Build Jar') {
+            steps {
+                sh 'mvn clean package'
+            }
+        }
+        stage('Static Code Analysis') {
+            steps {
+                sh 'mvn spotbugs:check'
+            }
+        }
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    docker.build(DOCKER_IMAGE, '.')
+                }
+            }
+        }
+        stage('Docker Image Scan') {
+            steps {
+                sh './trivy-scan.sh'
+            }
+        }
+        stage('Push Docker Image') {
+            steps {
+                script {
+                    docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-credentials') {
+                        docker.image(DOCKER_IMAGE).push()
+                    }
+                }
+            }
+        }
+        stage('Kubernetes Manifest Scan') {
+            steps {
+                sh './k8s-scan.sh'
+            }
+        }
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    withKubeConfig([credentialsId: 'kubeconfig-credentials']) {
+                        sh """
+                        kubectl apply -f k8s-deployment.yaml
+                        kubectl apply -f k8s-service.yaml
+                        kubectl rollout status deployment/java-k8s-app
+                        """
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}
+
